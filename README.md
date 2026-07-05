@@ -1,2 +1,5 @@
-# PixelmonAbilityRandomizer
-Minecraft sidemod that randomizes Pokemon abilities in Pixelmon, with two configurable modes + a blacklist.
+https://modrinth.com/mod/pixelmon-ability-randomizer
+
+Made by CCDelic
+
+Support the pixelmon mod here: https://pixelmonmod.com/
