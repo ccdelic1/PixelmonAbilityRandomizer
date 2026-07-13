@@ -6,8 +6,12 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import com.pixelmon.abilityrandomizer.config.ConfigProxy;
 import com.pixelmon.abilityrandomizer.core.AbilityRandomizerEngine;
 import com.pixelmonmod.pixelmon.api.pokemon.Pokemon;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
  * Hooks the tail of {@link Pokemon#resetAbility()} - Pixelmon's single funnel for freshly
@@ -33,13 +37,23 @@ public abstract class MixinPokemonAbility {
     private static final ThreadLocal<Boolean> IN_RANDOMIZATION =
         ThreadLocal.withInitial(() -> false);
 
+    private static final Logger LOGGER = LogManager.getLogger("PixelmonAbilityRandomizer");
+
     @Inject(method = "resetAbility", at = @At("RETURN"), remap = false)
     private void abilityRandomizer$afterResetAbility(CallbackInfo ci) {
         if (IN_RANDOMIZATION.get()) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] MixinPokemonAbility: skipping re-entrant call");
+            }
             return;
         }
         IN_RANDOMIZATION.set(true);
         try {
+            if (ConfigProxy.isDebug()) {
+                Pokemon self = (Pokemon) (Object) this;
+                LOGGER.info("[AbilityRandomizer] MixinPokemonAbility: resetAbility hook for {} (slot={}, ha={})",
+                    AbilityRandomizerEngine.safeName(self), this.slot, this.ha);
+            }
             AbilityRandomizerEngine.apply((Pokemon) (Object) this, this.slot, this.ha);
         } finally {
             IN_RANDOMIZATION.set(false);

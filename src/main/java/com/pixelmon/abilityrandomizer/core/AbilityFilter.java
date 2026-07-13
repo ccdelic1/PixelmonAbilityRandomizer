@@ -61,6 +61,10 @@ public final class AbilityFilter {
                 blocked.add(normalize(name));
             }
         }
+        if (com.pixelmon.abilityrandomizer.config.ConfigProxy.isDebug()) {
+            org.apache.logging.log4j.LogManager.getLogger("PixelmonAbilityRandomizer")
+                .info("[AbilityRandomizer] AbilityFilter: built global blacklist with {} entries", blocked.size());
+        }
         return blocked;
     }
 
@@ -72,25 +76,37 @@ public final class AbilityFilter {
         if (!typeRestrictionsEnabled || form == null) {
             return true;
         }
+        boolean result;
         switch (normalizedAbility) {
             case "levitate":
-                return !form.isType(Type.FLYING);
+                result = !form.isType(Type.FLYING);
+                break;
             case "lightningrod":
             case "voltabsorb":
             case "motordrive":
-                return !form.isType(Type.GROUND);
+                result = !form.isType(Type.GROUND);
+                break;
             case "flashfire":
-                return !form.isType(Type.FIRE);
+                result = !form.isType(Type.FIRE);
+                break;
             case "sapsipper":
-                return !form.isType(Type.GRASS);
+                result = !form.isType(Type.GRASS);
+                break;
             case "normalize":
-                return !form.isType(Type.NORMAL);
+                result = !form.isType(Type.NORMAL);
+                break;
             case "waterabsorb":
             case "stormdrain":
-                return !form.isType(Type.WATER);
+                result = !form.isType(Type.WATER);
+                break;
             default:
                 return true;
         }
+        if (!result && com.pixelmon.abilityrandomizer.config.ConfigProxy.isDebug()) {
+            org.apache.logging.log4j.LogManager.getLogger("PixelmonAbilityRandomizer")
+                .info("[AbilityRandomizer] AbilityFilter: {} blocked by type caveat on {}", normalizedAbility, form.getName());
+        }
+        return result;
     }
 
     /**
@@ -103,24 +119,36 @@ public final class AbilityFilter {
         if (!typeRestrictionsEnabled || lineTypes == null || lineTypes.isEmpty()) {
             return true;
         }
+        boolean result;
         switch (normalizedAbility) {
             case "levitate":
-                return !lineTypes.contains(Type.FLYING);
+                result = !lineTypes.contains(Type.FLYING);
+                break;
             case "lightningrod":
             case "voltabsorb":
             case "motordrive":
-                return !lineTypes.contains(Type.GROUND);
+                result = !lineTypes.contains(Type.GROUND);
+                break;
             case "flashfire":
-                return !lineTypes.contains(Type.FIRE);
+                result = !lineTypes.contains(Type.FIRE);
+                break;
             case "sapsipper":
-                return !lineTypes.contains(Type.GRASS);
+                result = !lineTypes.contains(Type.GRASS);
+                break;
             case "normalize":
-                return !lineTypes.contains(Type.NORMAL);
+                result = !lineTypes.contains(Type.NORMAL);
+                break;
             case "waterabsorb":
             case "stormdrain":
-                return !lineTypes.contains(Type.WATER);
+                result = !lineTypes.contains(Type.WATER);
+                break;
             default:
                 return true;
         }
+        if (!result && com.pixelmon.abilityrandomizer.config.ConfigProxy.isDebug()) {
+            org.apache.logging.log4j.LogManager.getLogger("PixelmonAbilityRandomizer")
+                .info("[AbilityRandomizer] AbilityFilter: {} blocked by line type caveat", normalizedAbility);
+        }
+        return result;
     }
 }

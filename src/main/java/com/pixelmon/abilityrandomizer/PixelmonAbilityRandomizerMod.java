@@ -25,19 +25,26 @@ public class PixelmonAbilityRandomizerMod {
 
     public PixelmonAbilityRandomizerMod(IEventBus modEventBus, ModContainer container) {
         LOGGER.info("[AbilityRandomizer] Mod constructor called");
+        LOGGER.debug("[AbilityRandomizer] Mod container: {}", container.getModId());
         modEventBus.addListener(this::commonSetup);
         // Wild-spawn safety net runs on the game event bus (not the mod bus).
+        LOGGER.debug("[AbilityRandomizer] Registering game event bus listeners");
         AbilityRandomizerEvents.register(NeoForge.EVENT_BUS);
+        LOGGER.debug("[AbilityRandomizer] Mod constructor complete");
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
         LOGGER.info("[AbilityRandomizer] Loading configuration");
+        LOGGER.debug("[AbilityRandomizer] commonSetup: beginning config load");
         ConfigProxy.reload();
+        LOGGER.debug("[AbilityRandomizer] commonSetup: invalidating caches");
         AbilityRandomizerEngine.invalidateCaches();
         if (ConfigProxy.isLoaded()) {
             LOGGER.info("[AbilityRandomizer] Config loaded. Effective mode: {}", ConfigProxy.effectiveMode());
+            LOGGER.debug("[AbilityRandomizer] Config debugLogging: {}", ConfigProxy.isDebug());
         } else {
             LOGGER.error("[AbilityRandomizer] Config failed to load!");
         }
+        LOGGER.debug("[AbilityRandomizer] commonSetup complete");
     }
 }

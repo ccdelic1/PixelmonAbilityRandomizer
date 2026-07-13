@@ -37,6 +37,12 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
     @Comment("Per-species exclusions")
     private ExclusionsSection exclusions = new ExclusionsSection();
 
+    @Comment("Battle HUD ability display settings")
+    private BattleHudSection battleHud = new BattleHudSection();
+
+    @Comment("Chat message settings")
+    private MessagesSection messages = new MessagesSection();
+
     // ------------------------------------------------------------------
     // Section inner classes
     // ------------------------------------------------------------------
@@ -66,7 +72,7 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
         private boolean fullyRandom = false;
 
         @Comment("When true, extra debug messages are written to the log.")
-        private boolean debugLogs = false;
+        private boolean debugLogging = false;
     }
 
     @ConfigSerializable
@@ -101,15 +107,42 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
             + "excluded regardless of this list, because they are not real abilities."
         )
         private List<String> abilities = new ArrayList<>(Arrays.asList(
+            // Self-detrimental / overpowered (kept from the original defaults)
             "Truant",
             "Slow Start",
+            "Wonder Guard",
+            "Klutz",
+            "Revenant",
+            // Species- or form-locked signature abilities (do nothing on any other Pokemon)
+            "Zen Mode",
             "Schooling",
             "Shields Down",
+            "Stance Change",
+            "Zero to Hero",
+            "Ice Face",
             "Power Construct",
-            "Wonder Guard",
+            "Battle Bond",
+            "Forecast",
+            "Poison Puppeteer",
+            "Hunger Switch",
+            "Gulp Missile",
+            "Disguise",
+            "Flower Gift",
+            "Commander",
+            // Signature abilities with no coded battle effect on a random Pokemon
+            "Multitype",
+            "RKS System",
+            "Honey Gather",
+            "ComingSoon",
+            // Doubles-only support abilities (inert in single battles)
             "Plus",
             "Minus",
-            "Stance Change"
+            "Battery",
+            "Power Spot",
+            "Friend Guard",
+            "Healer",
+            "Symbiosis",
+            "Costar"
         ));
 
         @Comment(
@@ -146,6 +179,40 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
         private List<String> pokemon = new ArrayList<>();
     }
 
+    @ConfigSerializable
+    public static class BattleHudSection {
+        @Comment(
+            "Show the opponent's ability on the battle HUD (ENABLED by default).\n"
+            + "When enabled, an 'abilityInfo' panel appears to the right of the opponent's info\n"
+            + "container, showing the Pokemon's name and its (randomized) ability.\n"
+            + "Only shown in normal SINGLE WILD battles - never in trainer, PvP, double, triple,\n"
+            + "rotation, raid or horde battles."
+        )
+        private boolean showAbilityInBattleHud = true;
+
+        @Comment(
+            "Horizontal nudge (in GUI pixels) applied to the ability panel, relative to the right\n"
+            + "edge of the opponent's info container. Positive = right, negative = left. Default: 0."
+        )
+        private int abilityPanelXOffset = 0;
+
+        @Comment(
+            "Vertical nudge (in GUI pixels) applied to the ability panel, relative to the top of\n"
+            + "the opponent's info container. Positive = down, negative = up. Default: 0."
+        )
+        private int abilityPanelYOffset = 0;
+    }
+
+    @ConfigSerializable
+    public static class MessagesSection {
+        @Comment(
+            "Show a welcome banner in chat when a player joins (ENABLED by default).\n"
+            + "The banner thanks the player and points them at /randomizerhelp. Set to false to\n"
+            + "stop it from appearing on join."
+        )
+        private boolean showLoginBanner = true;
+    }
+
     // ------------------------------------------------------------------
     // Getters (delegate to sections, null-safe)
     // ------------------------------------------------------------------
@@ -158,8 +225,8 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
         return mode != null && mode.fullyRandom;
     }
 
-    public boolean isDebugLogs() {
-        return mode != null && mode.debugLogs;
+    public boolean isDebugLogging() {
+        return mode != null && mode.debugLogging;
     }
 
     public long getFixedSeed() {
@@ -188,6 +255,22 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
         return exclusions.pokemon;
     }
 
+    public boolean isShowAbilityInBattleHud() {
+        return battleHud != null && battleHud.showAbilityInBattleHud;
+    }
+
+    public int getAbilityPanelXOffset() {
+        return battleHud != null ? battleHud.abilityPanelXOffset : 0;
+    }
+
+    public int getAbilityPanelYOffset() {
+        return battleHud != null ? battleHud.abilityPanelYOffset : 0;
+    }
+
+    public boolean isShowLoginBanner() {
+        return messages != null && messages.showLoginBanner;
+    }
+
     // ------------------------------------------------------------------
     // Setters (used for seed write-back and tests)
     // ------------------------------------------------------------------
@@ -204,9 +287,9 @@ public class AbilityRandomizerConfig extends AbstractYamlConfig {
         }
     }
 
-    public void setDebugLogs(boolean value) {
+    public void setDebugLogging(boolean value) {
         if (mode != null) {
-            mode.debugLogs = value;
+            mode.debugLogging = value;
         }
     }
 

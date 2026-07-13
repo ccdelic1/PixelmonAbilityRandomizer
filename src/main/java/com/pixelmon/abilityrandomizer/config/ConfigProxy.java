@@ -65,11 +65,14 @@ public final class ConfigProxy {
 
             Path configFile = Paths.get(annotation.value());
             if (!configFile.toFile().exists()) {
+                LOGGER.debug("[AbilityRandomizer] Config file does not exist, creating: {}", configFile.toAbsolutePath());
                 configFile.getParent().toFile().mkdirs();
                 configFile.toFile().createNewFile();
             }
+            LOGGER.debug("[AbilityRandomizer] Loading config from: {}", configFile.toAbsolutePath());
 
             // Build a YAML loader with an empty header — no PixelmonMod branding.
+            LOGGER.debug("[AbilityRandomizer] Building YAML configuration loader");
             ConfigurationReference<CommentedConfigurationNode> base =
                 ConfigurationReference.fixed(
                     YamlConfigurationLoader.builder()
@@ -97,6 +100,7 @@ public final class ConfigProxy {
             if (instance == null) {
                 throw new IOException("Config instance is null");
             }
+            LOGGER.debug("[AbilityRandomizer] Config instance created, wiring internal references");
 
             // Wire the internal references via reflection (same pattern as YamlConfigFactory,
             // but we are in a different package so we cannot access protected fields directly).
@@ -108,9 +112,12 @@ public final class ConfigProxy {
             configField.setAccessible(true);
             configField.set(instance, reference);
 
+            LOGGER.debug("[AbilityRandomizer] Saving config to disk");
             instance.save();
 
             config = instance;
+            LOGGER.debug("[AbilityRandomizer] Config instance set; debugLogging={}, fixedSeed={}",
+                instance.isDebugLogging(), instance.getFixedSeed());
             LOGGER.info("[AbilityRandomizer] Configuration loaded successfully");
         } catch (Exception e) {
             LOGGER.error("[AbilityRandomizer] Failed to load configuration; falling back to defaults", e);
@@ -161,7 +168,7 @@ public final class ConfigProxy {
     }
 
     public static boolean isDebug() {
-        return config != null && config.isDebugLogs();
+        return config != null && config.isDebugLogging();
     }
 
     /** The randomization mode actually in effect after resolving the two toggles. */

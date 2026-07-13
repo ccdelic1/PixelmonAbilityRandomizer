@@ -3,14 +3,19 @@ package com.pixelmon.abilityrandomizer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.pixelmon.abilityrandomizer.command.AbilityRandomizerCommands;
+import com.pixelmon.abilityrandomizer.command.RandomizerMessages;
 import com.pixelmon.abilityrandomizer.config.ConfigProxy;
 import com.pixelmon.abilityrandomizer.core.AbilityRandomizerEngine;
 import com.pixelmon.abilityrandomizer.core.WorldSeedResolver;
 import com.pixelmonmod.pixelmon.api.pokemon.Pokemon;
 import com.pixelmonmod.pixelmon.entities.pixelmon.PixelmonEntity;
 
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 
@@ -38,7 +43,12 @@ public final class AbilityRandomizerEvents {
         gameEventBus.addListener(AbilityRandomizerEvents::onServerStarted);
         gameEventBus.addListener(AbilityRandomizerEvents::onServerStopping);
         gameEventBus.addListener(AbilityRandomizerEvents::onEntityJoin);
+        gameEventBus.addListener(AbilityRandomizerEvents::onPlayerLogin);
+        gameEventBus.addListener(AbilityRandomizerCommands::onRegisterCommands);
         LOGGER.info("[AbilityRandomizer] Event listeners registered");
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Event listeners registered (debug enabled)");
+        }
     }
 
     /**
@@ -47,6 +57,7 @@ public final class AbilityRandomizerEvents {
      * world's seed.
      */
     private static void onServerStarted(ServerStartedEvent event) {
+        LOGGER.debug("[AbilityRandomizer] onServerStarted: server starting");
         long fixed = ConfigProxy.getConfiguredFixedSeed();
         long seed;
         if (fixed != 0L) {
@@ -57,7 +68,12 @@ public final class AbilityRandomizerEvents {
             LOGGER.info("[AbilityRandomizer] Using this world's own seed for ability pools");
         }
         ConfigProxy.setRuntimeSeed(seed);
+        LOGGER.debug("[AbilityRandomizer] onServerStarted: runtime seed set to {}", seed);
         AbilityRandomizerEngine.invalidateCaches();
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] onServerStarted complete: seed={}, mode={}",
+                seed, ConfigProxy.effectiveMode());
+        }
     }
 
     /**
@@ -65,8 +81,25 @@ public final class AbilityRandomizerEvents {
      * game session starts fresh with its own seed.
      */
     private static void onServerStopping(ServerStoppingEvent event) {
+        LOGGER.debug("[AbilityRandomizer] onServerStopping: server stopping");
         ConfigProxy.setRuntimeSeed(ConfigProxy.getConfiguredFixedSeed());
         AbilityRandomizerEngine.invalidateCaches();
+        LOGGER.debug("[AbilityRandomizer] onServerStopping: caches invalidated, seed reset");
+    }
+
+    /** Send the welcome banner when a player joins, unless disabled in config. */
+    private static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (!ConfigProxy.isLoaded() || !ConfigProxy.get().isShowLoginBanner()) {
+            return;
+        }
+        try {
+            player.sendSystemMessage(RandomizerMessages.loginBanner());
+        } catch (Exception e) {
+            LOGGER.error("[AbilityRandomizer] Failed to send login banner", e);
+        }
     }
 
     private static void onEntityJoin(EntityJoinLevelEvent event) {
@@ -79,7 +112,15 @@ public final class AbilityRandomizerEvents {
         try {
             Pokemon pokemon = pixelmon.getPokemon();
             if (pokemon == null || !AbilityRandomizerEngine.isWild(pokemon)) {
+                if (ConfigProxy.isDebug() && pokemon != null) {
+                    LOGGER.info("[AbilityRandomizer] onEntityJoin: skipping {} (not wild / no pokemon)",
+                        pokemon != null ? AbilityRandomizerEngine.safeName(pokemon) : "null");
+                }
                 return;
+            }
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] onEntityJoin: wild spawn safety net for {}",
+                    AbilityRandomizerEngine.safeName(pokemon));
             }
             AbilityRandomizerEngine.apply(pokemon);
         } catch (Exception e) {

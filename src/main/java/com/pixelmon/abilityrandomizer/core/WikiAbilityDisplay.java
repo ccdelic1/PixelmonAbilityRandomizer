@@ -6,6 +6,9 @@ import java.util.Optional;
 import com.pixelmon.abilityrandomizer.config.ConfigProxy;
 import com.pixelmon.abilityrandomizer.config.ConfigProxy.Mode;
 import com.pixelmon.abilityrandomizer.core.AbilityRandomizerEngine.PoolDisplay;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import com.pixelmonmod.pixelmon.api.command.PixelmonCommandUtils;
 import com.pixelmonmod.pixelmon.api.pokemon.Pokemon;
 import com.pixelmonmod.pixelmon.api.pokemon.ability.Ability;
@@ -26,6 +29,8 @@ import net.minecraft.network.chat.MutableComponent;
  */
 public final class WikiAbilityDisplay {
 
+    private static final Logger LOGGER = LogManager.getLogger("PixelmonAbilityRandomizer");
+
     /** Translation key vanilla uses for the "Abilities: %s" line. */
     private static final String ABILITIES_KEY = "pixelmon.command.wiki.abilities";
     /** Translation key vanilla uses for the hidden-ability suffix, e.g. " (HA)". */
@@ -39,14 +44,25 @@ public final class WikiAbilityDisplay {
      */
     public static MutableComponent buildAbilitiesComponent(Pokemon pokemon) {
         if (pokemon == null || !ConfigProxy.isLoaded()) {
+            if (ConfigProxy.isDebug() && pokemon != null) {
+                LOGGER.info("[AbilityRandomizer] WikiAbilityDisplay: config not loaded, returning null");
+            }
             return null;
         }
         Mode mode = ConfigProxy.effectiveMode();
         if (mode == Mode.VANILLA || !AbilityRandomizerEngine.isActiveFor(pokemon)) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] WikiAbilityDisplay: vanilla mode or inactive for {}, returning null",
+                    AbilityRandomizerEngine.safeName(pokemon));
+            }
             return null;
         }
 
         if (mode == Mode.FULLY_RANDOM) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] WikiAbilityDisplay: Mode2 - any ability for {}",
+                    AbilityRandomizerEngine.safeName(pokemon));
+            }
             // Literal (not a translation key) so the exact text always shows regardless of which
             // language files the client has loaded.
             return PixelmonCommandUtils.format(ABILITIES_KEY,
@@ -56,6 +72,10 @@ public final class WikiAbilityDisplay {
         // Mode 1: show the randomized pool.
         Optional<PoolDisplay> poolOpt = AbilityRandomizerEngine.getMode1PoolForDisplay(pokemon);
         if (poolOpt.isEmpty()) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] WikiAbilityDisplay: Mode1 pool empty for {}, falling back to vanilla",
+                    AbilityRandomizerEngine.safeName(pokemon));
+            }
             return null; // pool not available - fall back to vanilla display
         }
         PoolDisplay pool = poolOpt.get();
@@ -80,6 +100,10 @@ public final class WikiAbilityDisplay {
             }
         }
 
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] WikiAbilityDisplay: built Mode1 abilities display for {}",
+                AbilityRandomizerEngine.safeName(pokemon));
+        }
         return PixelmonCommandUtils.format(ABILITIES_KEY, abilities);
     }
 }

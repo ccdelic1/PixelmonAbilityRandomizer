@@ -37,10 +37,12 @@ public final class WorldSeedResolver {
     public static long resolveForWorld(MinecraftServer server) {
         Path worldRoot = server.getWorldPath(LevelResource.ROOT);
         Path seedFile = worldRoot.resolve(SEED_FILE_NAME);
+        LOGGER.debug("[AbilityRandomizer] WorldSeedResolver: resolving seed for world at {}", worldRoot);
 
         // Existing world: read the stored seed.
         try {
             if (Files.exists(seedFile)) {
+                LOGGER.debug("[AbilityRandomizer] WorldSeedResolver: found existing seed file");
                 for (String line : Files.readAllLines(seedFile)) {
                     String trimmed = line.trim();
                     if (trimmed.isEmpty() || trimmed.startsWith("#")) {
@@ -49,6 +51,7 @@ public final class WorldSeedResolver {
                     try {
                         long seed = Long.parseLong(trimmed.split("\\s+")[0]);
                         if (seed != 0L) {
+                            LOGGER.debug("[AbilityRandomizer] WorldSeedResolver: read existing seed {}", seed);
                             return seed;
                         }
                     } catch (NumberFormatException ignored) {
@@ -56,6 +59,8 @@ public final class WorldSeedResolver {
                     }
                     break;
                 }
+            } else {
+                LOGGER.debug("[AbilityRandomizer] WorldSeedResolver: no seed file exists, will generate new");
             }
         } catch (Exception e) {
             LOGGER.warn("[AbilityRandomizer] Could not read the per-world seed file; generating a new one", e);
@@ -66,6 +71,7 @@ public final class WorldSeedResolver {
         if (seed == 0L) {
             seed = 1L;
         }
+        LOGGER.debug("[AbilityRandomizer] WorldSeedResolver: generated new seed {}", seed);
         try {
             Files.createDirectories(worldRoot);
             Files.write(seedFile, java.util.List.of(

@@ -3,6 +3,7 @@ package com.pixelmon.abilityrandomizer.core;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -27,6 +28,7 @@ import com.pixelmonmod.pixelmon.api.pokemon.species.Stats;
 import com.pixelmonmod.pixelmon.api.pokemon.stats.evolution.Evolution;
 import com.pixelmonmod.pixelmon.api.pokemon.type.Type;
 import com.pixelmonmod.pixelmon.api.registries.PixelmonSpecies;
+import com.pixelmonmod.pixelmon.api.util.helpers.RegistryHelper;
 import com.pixelmonmod.api.registry.RegistryValue;
 
 import net.minecraft.resources.ResourceKey;
@@ -73,6 +75,9 @@ public final class AbilityRandomizerEngine {
     /** Cached list of legal ability canonical names (Mode 2 draws from this). Rebuilt on invalidate. */
     private static volatile List<String> allowedNamesCache;
 
+    /** Cached, sorted display (translated) names of allowed abilities, for command autofill. */
+    private static volatile List<String> allowedDisplayNamesCache;
+
     /** Seed the caches were built against, so a config change forces a rebuild. */
     private static volatile long cacheSeed = Long.MIN_VALUE;
 
@@ -100,9 +105,11 @@ public final class AbilityRandomizerEngine {
 
     /** Drop all cached pools / allowed lists. Call after the config reloads or when the world changes. */
     public static void invalidateCaches() {
+        LOGGER.debug("[AbilityRandomizer] Engine: invalidating all caches");
         POOL_CACHE.clear();
         EFFECTIVE_TAG_CACHE.clear();
         allowedNamesCache = null;
+        allowedDisplayNamesCache = null;
         cachedBlacklist = null;
         maxRegistrySize.set(0);
         lastRegistryComplete = false;
@@ -117,6 +124,9 @@ public final class AbilityRandomizerEngine {
      */
     public static void apply(Pokemon pokemon) {
         if (pokemon == null) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.apply: pokemon is null, skipping");
+            }
             return;
         }
         int slot;
@@ -127,6 +137,10 @@ public final class AbilityRandomizerEngine {
         } catch (Exception e) {
             slot = -1;
             ha = false;
+        }
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine.apply: {} (slot={}, ha={})",
+                safeName(pokemon), slot, ha);
         }
         apply(pokemon, slot, ha);
     }
@@ -140,21 +154,54 @@ public final class AbilityRandomizerEngine {
      */
     public static void apply(Pokemon pokemon, int vanillaSlot, boolean vanillaHa) {
         if (pokemon == null || !ConfigProxy.isLoaded()) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.apply: pokemon={}, configLoaded={} - skipping",
+                    pokemon != null ? safeName(pokemon) : "null", ConfigProxy.isLoaded());
+            }
             return;
         }
         Mode mode = ConfigProxy.effectiveMode();
         if (mode == Mode.VANILLA) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.apply: vanilla mode - skipping {}", safeName(pokemon));
+            }
             return;
         }
         try {
             Stats form = pokemon.getForm();
             Species species = pokemon.getSpecies();
             if (form == null || species == null) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine.apply: {} has null form or species - skipping",
+                        safeName(pokemon));
+                }
                 return;
             }
             if (isExcluded(species)) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine.apply: {} is excluded - skipping",
+                        safeName(pokemon));
+                }
                 return;
             }
+            // The world registry is unreachable during the initial world-load datapack pass
+            // (WorldOpenFlows.loadWorldDataBlocking): the integrated server has not started yet and
+            // the client level is still null, so any type lookup — Stats.getTypes()/isType() used
+            // by pool-building and the type caveats — routes through
+            // RegistryHelper.registryAccess() -> ClientRegistryHelper and throws an NPE. The spawn
+            // system creates throwaway template Pokemon in exactly this window (Pixelmon's spawn-set
+            // import plus the SpawnCongregator / NMUS post-processors), so we would otherwise throw
+            // once per template. Skip randomization here — and, as with the registry guard below, do
+            // NOT cache — so abilities re-roll correctly once the world is live. This is why the bug
+            // "fixed itself" after a reload: by then the registry is reachable.
+            if (!isRegistryContextReady()) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.warn("[AbilityRandomizer] World registry not ready when randomizing {}; will retry",
+                        safeName(pokemon));
+                }
+                return;
+            }
+
             refreshCachesIfSeedChanged();
 
             // If the ability registry is not populated yet (e.g. mid registry-sync after a world
@@ -169,13 +216,39 @@ public final class AbilityRandomizerEngine {
             }
 
             if (mode == Mode.SPECIES_CONSISTENT) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine.apply: Mode1 for {} (slot={}, ha={})",
+                        safeName(pokemon), vanillaSlot, vanillaHa);
+                }
                 applyMode1(pokemon, form, vanillaSlot, vanillaHa);
             } else {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine.apply: Mode2 for {}", safeName(pokemon));
+                }
                 applyMode2(pokemon, form);
             }
         } catch (Exception e) {
             // Never let a randomization error break Pokemon creation.
             LOGGER.error("[AbilityRandomizer] Error while randomizing ability for {}", safeName(pokemon), e);
+        }
+    }
+
+    /**
+     * Whether Pixelmon's world registry is currently reachable. This mirrors the resolution done by
+     * {@link RegistryHelper#registryAccess()}: it succeeds once an integrated/dedicated server is
+     * running or a client level exists, and fails during the initial world-load datapack pass when
+     * neither is available yet. We probe it defensively (a failure surfaces as an NPE from
+     * {@code ClientRegistryHelper}) so we can bail out of randomization before any type lookup is
+     * attempted, rather than throwing once per template Pokemon.
+     *
+     * @return {@code true} if a registry access can be obtained; {@code false} if the world context
+     *         is not ready yet.
+     */
+    private static boolean isRegistryContextReady() {
+        try {
+            return RegistryHelper.registryAccess() != null;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -239,7 +312,13 @@ public final class AbilityRandomizerEngine {
 
         Pool cached = POOL_CACHE.get(rootKey);
         if (cached != null) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine: pool cache hit for '{}'", rootKey);
+            }
             return cached;
+        }
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine: building new pool for '{}'", rootKey);
         }
         Pool pool = buildPool(rootSpecies, regionalTag);
         // Only cache a usable pool that was built from a COMPLETE registry. An empty or partial-
@@ -264,6 +343,9 @@ public final class AbilityRandomizerEngine {
     private static String effectiveRegionalTag(Stats form, Species base) {
         String own = form.getRegionalTag();
         if (own != null) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine: regional tag for {} is '{}' (own)", form.getName(), own);
+            }
             return own;
         }
         Species self = form.getParentSpecies();
@@ -288,6 +370,10 @@ public final class AbilityRandomizerEngine {
             }
         }
         EFFECTIVE_TAG_CACHE.put(cacheKey, resolved);
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine: effective regional tag for {} resolved to '{}'",
+                cacheKey, resolved);
+        }
         return resolved.isEmpty() ? null : resolved;
     }
 
@@ -422,17 +508,28 @@ public final class AbilityRandomizerEngine {
             ability = AbilityRegistry.getAbility(name);
         }
         if (ability.isEmpty() || ability.get() == null) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.warn("[AbilityRandomizer] Engine: ability '{}' not found in registry for {}", name, safeName(pokemon));
+            }
             return;
         }
         Ability current = pokemon.getAbility();
         if (current != null && current.getName().equalsIgnoreCase(ability.get().getName())
             && pokemon.getAbilitySlot() == storeSlot) {
             // Already correct - avoid needless markDirty churn.
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine: {} already has correct ability {} - skipping",
+                    safeName(pokemon), ability.get().getName());
+            }
             return;
         }
         pokemon.setAbility(ability.get());
         pokemon.setAbilitySlot(storeSlot);
         pokemon.setHA(hidden);
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine: assigned {} -> {} (slot={}, hidden={})",
+                safeName(pokemon), ability.get().getName(), storeSlot, hidden);
+        }
         if (!loggedFirstAssign) {
             loggedFirstAssign = true;
             LOGGER.info("[AbilityRandomizer] Randomization active - first assignment: {} -> {}",
@@ -451,6 +548,10 @@ public final class AbilityRandomizerEngine {
         for (String entry : excluded) {
             String norm = AbilityFilter.normalize(entry);
             if (!norm.isEmpty() && (norm.equals(name) || norm.equals(stripped))) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine: {} excluded by config entry '{}'",
+                        species.getName(), entry);
+                }
                 return true;
             }
         }
@@ -468,9 +569,15 @@ public final class AbilityRandomizerEngine {
     private static List<String> getAllowedNames() {
         List<String> cached = allowedNamesCache;
         if (cached != null && !cached.isEmpty()) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine: returning cached allowed names ({} abilities)", cached.size());
+            }
             return cached;
         }
         // Resolve or rebuild the blacklist (lazy, rebuilt after invalidateCaches).
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine: rebuilding allowed names list");
+        }
         Set<String> blacklist = cachedBlacklist;
         if (blacklist == null) {
             blacklist = AbilityFilter.buildGlobalBlacklist(ConfigProxy.get());
@@ -512,6 +619,10 @@ public final class AbilityRandomizerEngine {
         }
         loggedNoAbilities = false;
         allowedNamesCache = names;
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine: allowed names list rebuilt with {} abilities (blacklist: {})",
+                names.size(), blacklist.size());
+        }
         return names;
     }
 
@@ -601,6 +712,10 @@ public final class AbilityRandomizerEngine {
         if (seed != cacheSeed) {
             synchronized (AbilityRandomizerEngine.class) {
                 if (seed != cacheSeed) {
+                    if (ConfigProxy.isDebug()) {
+                        LOGGER.info("[AbilityRandomizer] Engine: seed changed from {} to {}, invalidating caches",
+                            cacheSeed, seed);
+                    }
                     invalidateCaches();
                     cacheSeed = seed;
                 }
@@ -624,7 +739,7 @@ public final class AbilityRandomizerEngine {
         return h;
     }
 
-    private static String safeName(Pokemon pokemon) {
+    public static String safeName(Pokemon pokemon) {
         try {
             Species species = pokemon.getSpecies();
             return species != null ? species.getName() : "<unknown>";
@@ -640,12 +755,22 @@ public final class AbilityRandomizerEngine {
     /** Whether randomization applies to this Pokemon: a mode is enabled and the species is not excluded. */
     public static boolean isActiveFor(Pokemon pokemon) {
         if (pokemon == null || !ConfigProxy.isLoaded() || ConfigProxy.effectiveMode() == Mode.VANILLA) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.isActiveFor: false (null/config/vanilla)");
+            }
             return false;
         }
         try {
             Species species = pokemon.getSpecies();
-            return species != null && !isExcluded(species);
+            boolean active = species != null && !isExcluded(species);
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.isActiveFor: {} -> {}", safeName(pokemon), active);
+            }
+            return active;
         } catch (Exception e) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.isActiveFor: {} -> false (exception)", safeName(pokemon));
+            }
             return false;
         }
     }
@@ -657,6 +782,10 @@ public final class AbilityRandomizerEngine {
      */
     public static Optional<PoolDisplay> getMode1PoolForDisplay(Pokemon pokemon) {
         if (!isActiveFor(pokemon) || ConfigProxy.effectiveMode() != Mode.SPECIES_CONSISTENT) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.getMode1PoolForDisplay: not active or not Mode1 for {}",
+                    safeName(pokemon));
+            }
             return Optional.empty();
         }
         try {
@@ -670,6 +799,10 @@ public final class AbilityRandomizerEngine {
             }
             Pool pool = getOrBuildPool(form);
             if (pool == null || (pool.normal.length == 0 && pool.hidden.length == 0)) {
+                if (ConfigProxy.isDebug()) {
+                    LOGGER.info("[AbilityRandomizer] Engine.getMode1PoolForDisplay: empty pool for {}",
+                        safeName(pokemon));
+                }
                 return Optional.empty();
             }
             List<Ability> normal = resolveAbilities(pool.normal);
@@ -677,11 +810,149 @@ public final class AbilityRandomizerEngine {
             if (normal.isEmpty() && hidden.isEmpty()) {
                 return Optional.empty();
             }
+            if (ConfigProxy.isDebug()) {
+                LOGGER.info("[AbilityRandomizer] Engine.getMode1PoolForDisplay: {} normal, {} hidden for {}",
+                    normal.size(), hidden.size(), safeName(pokemon));
+            }
             return Optional.of(new PoolDisplay(normal, hidden));
         } catch (Exception e) {
             LOGGER.error("[AbilityRandomizer] Failed to resolve display pool for {}", safeName(pokemon), e);
             return Optional.empty();
         }
+    }
+
+    /** Public exclusion check for command/UI surfaces. */
+    public static boolean isSpeciesExcluded(Species species) {
+        return species != null && isExcluded(species);
+    }
+
+    /**
+     * The Mode 1 pool for a species' default form, as canonical ability names. Empty unless Mode 1 is
+     * active, the species is not excluded, and the registry/pool is ready. Every member of an
+     * evolution line resolves to the same line pool.
+     */
+    public static Optional<PoolNames> getMode1PoolNames(Species species) {
+        if (species == null || !ConfigProxy.isLoaded()
+            || ConfigProxy.effectiveMode() != Mode.SPECIES_CONSISTENT
+            || isExcluded(species)) {
+            return Optional.empty();
+        }
+        try {
+            Stats form = species.getDefaultForm();
+            if (form == null) {
+                return Optional.empty();
+            }
+            refreshCachesIfSeedChanged();
+            if (getAllowedNames().isEmpty()) {
+                return Optional.empty();
+            }
+            Pool pool = getOrBuildPool(form);
+            if (pool == null || (pool.normal.length == 0 && pool.hidden.length == 0)) {
+                return Optional.empty();
+            }
+            return Optional.of(new PoolNames(pool.normal.clone(), pool.hidden.clone()));
+        } catch (Exception e) {
+            if (ConfigProxy.isDebug()) {
+                LOGGER.warn("[AbilityRandomizer] getMode1PoolNames failed for {}", species.getName(), e);
+            }
+            return Optional.empty();
+        }
+    }
+
+    /** Resolved Mode 1 pool for a species, for the {@code /abilityinfo <pokemon>} display. */
+    public static Optional<PoolDisplay> getMode1PoolForSpecies(Species species) {
+        Optional<PoolNames> names = getMode1PoolNames(species);
+        if (names.isEmpty()) {
+            return Optional.empty();
+        }
+        List<Ability> normal = resolveAbilities(names.get().normal);
+        List<Ability> hidden = resolveAbilities(names.get().hidden);
+        if (normal.isEmpty() && hidden.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new PoolDisplay(normal, hidden));
+    }
+
+    /**
+     * Every species whose Mode 1 pool includes the given ability (matched by canonical name),
+     * flagged with whether it sits in that species' hidden slot. Sorted by national dex. Empty when
+     * not in Mode 1. This walks all species (pools are cached per evolution line).
+     */
+    public static List<SpeciesAbilityMatch> findSpeciesWithAbility(String abilityCanonicalName) {
+        List<SpeciesAbilityMatch> matches = new ArrayList<>();
+        if (abilityCanonicalName == null || ConfigProxy.effectiveMode() != Mode.SPECIES_CONSISTENT) {
+            return matches;
+        }
+        String target = AbilityFilter.normalize(abilityCanonicalName);
+        for (Species species : PixelmonSpecies.getAll()) {
+            Optional<PoolNames> names = getMode1PoolNames(species);
+            if (names.isEmpty()) {
+                continue;
+            }
+            boolean inNormal = containsNormalized(names.get().normal, target);
+            boolean inHidden = containsNormalized(names.get().hidden, target);
+            if (inNormal || inHidden) {
+                matches.add(new SpeciesAbilityMatch(species, inHidden && !inNormal));
+            }
+        }
+        matches.sort(Comparator.comparingInt(match -> match.species.getDex()));
+        return matches;
+    }
+
+    private static boolean containsNormalized(String[] names, String targetNormalized) {
+        for (String name : names) {
+            if (AbilityFilter.normalize(name).equals(targetNormalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Resolve a user-typed ability name to a registered ability, tolerating spacing/case
+     * (e.g. "sap sipper", "SapSipper", "Sap Sipper"). Matches against all registered abilities,
+     * so blacklisted abilities still resolve (their reverse lookup will simply be empty).
+     */
+    public static Optional<Ability> resolveAbility(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<Ability> direct = AbilityRegistry.getAbility(input.trim());
+        if (direct.isPresent()) {
+            return direct;
+        }
+        String norm = AbilityFilter.normalize(input);
+        for (Ability ability : AbilityRegistry.getAllAbilities()) {
+            if (ability == null) {
+                continue;
+            }
+            if (AbilityFilter.normalize(ability.getName()).equals(norm)
+                || AbilityFilter.normalize(ability.getTranslatedName().getString()).equals(norm)) {
+                return Optional.of(ability);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Sorted display (translated) names of the allowed (non-blacklisted) abilities, for command
+     * autofill. Cached alongside the allowed-names list; only cached once that list is ready.
+     */
+    public static List<String> getAllowedAbilityDisplayNames() {
+        List<String> cached = allowedDisplayNamesCache;
+        if (cached != null) {
+            return cached;
+        }
+        List<String> names = new ArrayList<>();
+        for (String canonical : getAllowedNames()) {
+            Optional<Ability> ability = AbilityRegistry.getAbility(canonical);
+            names.add(ability.isPresent() ? ability.get().getTranslatedName().getString() : canonical);
+        }
+        names.sort(String.CASE_INSENSITIVE_ORDER);
+        if (allowedNamesCache != null) {
+            allowedDisplayNamesCache = names;
+        }
+        return names;
     }
 
     private static List<Ability> resolveAbilities(String[] names) {
@@ -693,13 +964,20 @@ public final class AbilityRandomizerEngine {
             }
             ability.ifPresent(list::add);
         }
+        if (ConfigProxy.isDebug()) {
+            LOGGER.info("[AbilityRandomizer] Engine.resolveAbilities: resolved {} of {} names", list.size(), names.length);
+        }
         return list;
     }
 
     /** Whether this Pokemon is currently a wild (unowned) Pokemon. */
     public static boolean isWild(Pokemon pokemon) {
         try {
-            return pokemon != null && pokemon.getOwnerPlayerUUID() == null;
+            boolean wild = pokemon != null && pokemon.getOwnerPlayerUUID() == null;
+            if (ConfigProxy.isDebug() && pokemon != null) {
+                LOGGER.info("[AbilityRandomizer] Engine.isWild: {} -> {}", safeName(pokemon), wild);
+            }
+            return wild;
         } catch (Exception e) {
             return false;
         }
@@ -720,6 +998,44 @@ public final class AbilityRandomizerEngine {
         }
 
         public List<Ability> getHidden() {
+            return hidden;
+        }
+    }
+
+    /** Public, canonical-name view of a Mode 1 pool (used by command lookups). */
+    public static final class PoolNames {
+        private final String[] normal;
+        private final String[] hidden;
+
+        private PoolNames(String[] normal, String[] hidden) {
+            this.normal = normal;
+            this.hidden = hidden;
+        }
+
+        public String[] getNormal() {
+            return normal;
+        }
+
+        public String[] getHidden() {
+            return hidden;
+        }
+    }
+
+    /** A species that holds a queried ability, with whether it is that species' hidden ability. */
+    public static final class SpeciesAbilityMatch {
+        private final Species species;
+        private final boolean hidden;
+
+        private SpeciesAbilityMatch(Species species, boolean hidden) {
+            this.species = species;
+            this.hidden = hidden;
+        }
+
+        public Species getSpecies() {
+            return species;
+        }
+
+        public boolean isHidden() {
             return hidden;
         }
     }

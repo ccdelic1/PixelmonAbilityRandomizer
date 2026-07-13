@@ -5,8 +5,13 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "MixinPokemonAbility",
-    "MixinWikiMainStrategy"
+    "MixinWikiMainStrategy",
+    "MixinChooseStarterScreen",
+    "MixinPixelmonClientData"
   ],
-  "client": [],
+  "client": [
+    "ClientBattleManagerAccessor",
+    "MixinOpponentElement"
+  ],
   "server": []
 }
